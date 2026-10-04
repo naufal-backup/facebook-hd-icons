@@ -24,6 +24,26 @@ Facebook menampilkan banyak ikon sebagai PNG/Sprite kecil (16–20px) yang terli
 - **Cache persisten** — SVG diunduh sekali lalu disimpan (via `GM_setValue`), kunjungan berikutnya langsung HD tanpa jeda.
 - **Idempoten & tahan re-render** — semua fungsi upgrade bisa dipanggil berulang; MutationObserver memasang ulang ikon jika React mengembalikan ikon lama.
 
+## Perbandingan (Before/After)
+
+### Reaction picker (hover tombol Like)
+
+Baris atas = sebelum dipasang skrip (sprite Facebook), baris bawah = sesudah (Twemoji SVG + thumb biru vector).
+
+![Before/after reaction picker](docs/reaction-picker.jpg)
+
+### Ikon sidebar kiri
+
+Kiri = ikon bawaan Facebook (sprite), kanan = Twemoji SVG sesuai topiknya.
+
+![Before/after sidebar](docs/sidebar.jpg)
+
+### Emoji picker
+
+Kiri = emoji PNG bawaan Facebook, kanan = Twemoji SVG (tajam di semua DPI).
+
+![Before/after emoji picker](docs/emoji-picker.jpg)
+
 ## Instalasi
 
 1. Pasang ekstensi [Tampermonkey](https://www.tampermonkey.net/) (atau Violentmonkey / Greasemonkey).
