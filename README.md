@@ -2,7 +2,7 @@
 
 UserScript yang membuat ikon Facebook jadi **vector (HD, tidak blur)** — Like/Comment/Share, toolbar komentar, sidebar, emoji, dan reaction picker. Dimuat secepat mungkin (`document-start`), tanpa kedipan ikon lama.
 
-![Version](https://img.shields.io/badge/version-3.0-blue)
+![Version](https://img.shields.io/badge/version-3.1-blue)
 ![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -14,6 +14,9 @@ Facebook menampilkan banyak ikon sebagai PNG/Sprite kecil (16–20px) yang terli
 
 - **Like / Comment / Share** — ikon tombol aksi post diganti SVG vector, termasuk status aktif (thumb biru terisi, reaction berwarna yang sudah dipilih).
 - **Toolbar komentar** — ikon avatar, foto/video, GIF, dan stiker di kolom komentar.
+- **Tombol "Create a post"** — ikon Live video, Photo/video, dan Reel (webp 24px) diganti SVG vector, warnanya ikut tema terang/gelap.
+- **Avatar "Create a post"** — gambar diminta ke CDN 160×160 (bukan 40×40) supaya tajam di layar retina.
+- **Tombol status reaksi komentar** — emoji reaksi aktif ("Remove Haha") dan tombol gantinya ("Change Haha reaction", sprite 12px) diganti Twemoji SVG.
 - **Sidebar kiri** — ±20 item (Meta AI, Teman, Grup, Marketplace, Event, Gaming, dsb.) diganti ikon vector/emoji sesuai topiknya.
 - **Emoji** — semua emoji PNG (`emoji.php`) diganti Twemoji SVG, termasuk emoji di kolom input (editor Lexical).
 - **Reaction picker** — emoji Like/Love/Care/Haha/Wow/Sad/Angry saat hover diganti Twemoji SVG lengkap dengan efek membesar saat hover (seperti bawaan Facebook).
@@ -24,8 +27,9 @@ Facebook menampilkan banyak ikon sebagai PNG/Sprite kecil (16–20px) yang terli
 ## Instalasi
 
 1. Pasang ekstensi [Tampermonkey](https://www.tampermonkey.net/) (atau Violentmonkey / Greasemonkey).
-2. Klik file [`Facebook-HD-Icons-3.0.user.js`](./Facebook-HD-Icons-3.0.user.js) di repo ini, lalu klik **Raw** — Tampermonkey otomatis menawarkan pemasangan.
+2. Klik file [`Facebook-HD-Icons.user.js`](./Facebook-HD-Icons.user.js) di repo ini, lalu klik **Raw** — Tampermonkey otomatis menawarkan pemasangan.
    - Alternatif: buka tab Tampermonkey → Create new script → tempel seluruh isi file → Save.
+   - Skrip punya `@updateURL` menunjuk ke file Raw di repo ini, jadi update berikutnya tinggal klik "Check for updates" di dasbor Tampermonkey.
 3. Buka [facebook.com](https://www.facebook.com) — ikon sudah HD.
 
 > **Catatan:** skrip hanya berjalan di `https://*.facebook.com/*`.
@@ -68,6 +72,18 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 - **Ikon tertentu masih blur** — pastikan skrip versi terbaru aktif di dasbor Tampermonkey, lalu reload Facebook dengan Ctrl+Shift+R.
 - **Reaksi tidak berubah setelah Facebook update** — struktur DOM Facebook bisa berubah; laporkan lewat GitHub Issues sertakan tangkapan layar dan (bila bisa) output `Ctrl+Shift+H`.
 - **Emoji terlalu rapat di kolom input** — ubah `EMOJI_INPUT_GAP` / `EMOJI_INPUT_SCALE` (lihat tabel konfigurasi).
+
+## Changelog
+
+### v3.1
+- Ikon **Live video / Photo/video / Reel** di "Create a post" (webp 24px) diganti SVG vector — sebelumnya blur.
+- **Avatar** di "Create a post" diminta ke CDN ukuran 160×160 (sebelumnya 40×40) — tajam di layar retina.
+- Tombol status reaksi komentar **"Remove X reaction"** & **"Change X reaction"** diganti Twemoji SVG (sebelumnya pakai emoji/Sprite bawaan FB).
+- Tambah metadata `@homepage`, `@supportURL`, `@updateURL`, `@downloadURL` (update otomatis dari repo ini).
+- Nama file direname jadi `Facebook-HD-Icons.user.js` (stabil, tidak berubah tiap rilis).
+
+### v3.0
+- Rilis awal: Like/Comment/Share, toolbar komentar, sidebar, emoji, reaction picker, ringkasan reaction.
 
 ## Kredit
 

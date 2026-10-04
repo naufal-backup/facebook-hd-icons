@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         Facebook HD Icons
 // @namespace    fb-hd-icons
-// @version      3.0
-// @description  Ikon Like/Comment/Share, toolbar komentar, sidebar, emoji, dan reaction jadi vector (HD, tidak blur) - dimuat secepat mungkin
+// @version      3.1
+// @description  Ikon Like/Comment/Share, tombol Create a post, avatar, toolbar komentar, sidebar, emoji, dan reaction jadi vector (HD, tidak blur) - dimuat secepat mungkin
+// @homepage     https://github.com/naufal-backup/facebook-hd-icons
+// @supportURL   https://github.com/naufal-backup/facebook-hd-icons/issues
+// @updateURL    https://github.com/naufal-backup/facebook-hd-icons/raw/master/Facebook-HD-Icons.user.js
+// @downloadURL  https://github.com/naufal-backup/facebook-hd-icons/raw/master/Facebook-HD-Icons.user.js
 // @match        https://*.facebook.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -253,6 +257,112 @@
     });
   }
 
+  // ===== 1c. Ikon tombol "Create a post": Live video / Photo/video / Reel =====
+  // Ikon-ikon ini berupa <img> webp 24px dari rsrc.php (sprite -> blur) dan tidak punya
+  // aria-label per ikon. Ganti lewat CSS mask: src diganti transparan, warnanya ikut
+  // tema halaman (var(--secondary-icon)).
+  const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+  const CREATE_ICONS = [
+    [/^(live video|video live|siaran langsung|video langsung)$/i, 'live'],
+    [/^(photo\/video|foto\/video)$/i, 'photo'],
+    [/^reels?$/i, 'reel']
+  ];
+  const CREATE_PATHS = {
+    live: 'M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z',
+    photo: COMPOSER_PATHS.photo,
+    reel: 'M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z'
+  };
+
+  function applyImgMask(img, type, paths) {
+    const key = 'im' + type;
+    const u = maskCache[key] || (maskCache[key] = svgUrl(paths[type]));
+    if (img.dataset.hdCp === type && img.getAttribute('src') === BLANK_GIF) return;
+    img.dataset.hdCp = type;
+    watch(img);
+    img.removeAttribute('srcset');
+    setImp(img, 'background-image', 'none');
+    img.setAttribute('src', BLANK_GIF); // webp lama disembunyikan, kotak tetap 24px
+    setImp(img, 'background-color', 'var(--secondary-icon, currentColor)');
+    ['', '-webkit-'].forEach((p) => {
+      setImp(img, p + 'mask-image', u);
+      setImp(img, p + 'mask-size', 'contain');
+      setImp(img, p + 'mask-repeat', 'no-repeat');
+      setImp(img, p + 'mask-position', 'center');
+    });
+  }
+
+  function upgradeCreatePostIcons(root) {
+    root.querySelectorAll('[role="button"][aria-label]').forEach((btn) => {
+      const hit = CREATE_ICONS.find(([re]) => re.test(btn.getAttribute('aria-label') || ''));
+      if (!hit) return;
+      const img = btn.querySelector('img');
+      if (!img) return;
+      if ((img.offsetWidth || 24) > 32) return; // bukan ikon kecil komposer
+      applyImgMask(img, hit[1], CREATE_PATHS);
+    });
+  }
+
+  // ===== 1d. Avatar bertanda <image> dengan crop CDN (ctp=sNNxNN) =====
+  // Avatar40px meminta gambar 40x40 -> blur di layar retina. Minta versi 160px
+  // (SVG-nya tetap dirender 40px oleh Facebook).
+  const XLINK_NS = 'http://www.w3.org/1999/xlink';
+  function upgradeAvatarRes(root) {
+    root.querySelectorAll('svg image').forEach((im) => {
+      const href = im.getAttribute('xlink:href') || im.getAttribute('href') || '';
+      const m = href.match(/ctp=s(\d+)x\d+/);
+      if (!m) return;
+      if (+m[1] > 80) return; // sudah besar, jangan diubah
+      const big = href.replace(/ctp=s\d+x\d+/, 'ctp=s160x160');
+      if (href === big) return;
+      if (im.hasAttributeNS(XLINK_NS, 'href')) im.setAttributeNS(XLINK_NS, 'xlink:href', big);
+      else im.setAttribute('href', big);
+    });
+  }
+
+  // ===== 1e. Tombol status reaksi komentar: "Remove Haha" / "Change Haha reaction" =====
+  // Emoji aktif memakai <img> SVG buatan FB (tanpa alt), tombol gantinya memakai sprite
+  // <i> 12px -> keduanya diganti Twemoji supaya konsisten dengan bagian lain & tajam.
+  const STATE_RE = /^(?:remove|change|hapus|ganti|ubah|tukar|batal|unlike)\s+(.+?)(?:\s+(?:reaction|reaksi))?$/i;
+  function reactionKeyFromStateLabel(label) {
+    const m = STATE_RE.exec(String(label || '').trim());
+    if (!m) return null;
+    const name = m[1].trim().replace(/^(?:reaction|reaksi)\s+/i, '');
+    const hit = REACTIONS.find(([re]) => re.test(name));
+    return hit ? hit[1] : null;
+  }
+
+  async function upgradeReactionStateButtons(root) {
+    root.querySelectorAll('[role="button"][aria-label]').forEach(async (btn) => {
+      const key = reactionKeyFromStateLabel(btn.getAttribute('aria-label'));
+      if (!key) return;
+      if (btn.querySelector('[data-ad-rendering-role]')) return; // tombol aksi post: sudah ditangani
+      const uri = key === 'like' ? LIKE_SVG : await loadSvg(key);
+      if (!uri) return;
+      // a) <img> emoji yang sedang aktif (16px)
+      const img = btn.querySelector('img');
+      if (img && (img.offsetWidth || 16) <= 24) {
+        watch(img);
+        if (img.dataset.hdState !== key || img.getAttribute('src') !== uri) {
+          img.dataset.hdState = key;
+          img.removeAttribute('srcset');
+          img.setAttribute('src', uri);
+        }
+      }
+      // b) sprite <i> mini "Change X reaction" (12px)
+      const icon = btn.querySelector('i[data-visualcompletion="css-img"]');
+      if (icon && (icon.offsetWidth || 12) <= 24) {
+        watch(icon);
+        if (icon.dataset.hdState !== key || !(icon.style.backgroundImage || '').startsWith('url("data:')) {
+          icon.dataset.hdState = key;
+          setImp(icon, 'background-image', `url("${uri}")`);
+          setImp(icon, 'background-size', 'contain');
+          setImp(icon, 'background-position', 'center');
+          setImp(icon, 'background-repeat', 'no-repeat');
+        }
+      }
+    });
+  }
+
   // ===== 2. Emoji (PNG -> Twemoji SVG) =====
   function twemojiName(ch) {
     const s = ch.includes('\u200d') ? ch : ch.replace(/\uFE0F/g, '');
@@ -404,6 +514,7 @@
       const label = item.getAttribute('aria-label');
       if (!label || label.length > 20) return;
       if (item.querySelector('[data-ad-rendering-role]')) return;   // tombol aksi post
+      if (reactionKeyFromStateLabel(label)) return;                 // "Remove/Change X reaction" -> fungsi 1e
       const hit = reactionOf(label);
       if (!hit) return;
       const w = item.offsetWidth;
@@ -482,6 +593,9 @@
   function run(root) {
     upgradeActionIcons(root);
     upgradeComposerIcons(root);
+    upgradeCreatePostIcons(root);
+    upgradeAvatarRes(root);
+    upgradeReactionStateButtons(root);
     upgradeSidebarIcons(root);
     upgradeSummaryIcons(root);
     upgradeAltReactionImgs(root);
