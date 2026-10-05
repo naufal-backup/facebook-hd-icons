@@ -2,7 +2,7 @@
 
 UserScript yang membuat ikon Facebook jadi **vector (HD, tidak blur)** — Like/Comment/Share, toolbar komentar, sidebar, emoji, dan reaction picker. Dimuat secepat mungkin (`document-start`), tanpa kedipan ikon lama.
 
-![Version](https://img.shields.io/badge/version-3.2-blue)
+![Version](https://img.shields.io/badge/version-3.3-blue)
 ![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -21,7 +21,8 @@ Facebook menampilkan banyak ikon sebagai PNG/Sprite kecil (16–20px) yang terli
 - **Emoji** — semua emoji PNG (`emoji.php`) diganti Twemoji SVG, termasuk emoji di kolom input (editor Lexical).
 - **Reaction picker** — emoji Like/Love/Care/Haha/Wow/Sad/Angry saat hover diganti Twemoji SVG lengkap dengan efek membesar saat hover (seperti bawaan Facebook).
 - **Ringkasan reaction** — ikon kecil "N reactions; see who reacted to this" diganti Twemoji. Label-nya tidak menyebut nama reaction, jadi reaction dikenali dari **signature warna SVG native FB**-nya; kalau tidak dikenali ikon dibiarkan (tetap vector/tajam).
-- **Cache persisten** — SVG diunduh sekali lalu disimpan (via `GM_setValue`), kunjungan berikutnya langsung HD tanpa jeda.
+- **Preload penuh saat load** — seluruh set emoji Twemoji (3.846 file, ±9 MB) diunduh di latar belakang begitu Facebook selesai dimuat (antrean, maksimal 6 request paralel, retry 1× untuk yang gagal) — jadi saat hover picker, scroll, atau buka kolom komentar tidak ada yang masih menunggu load.
+- **Cache persisten** — SVG diunduh sekali lalu disimpan (via `GM_setValue`, dipecah jadi 16 shard agar aman dari batas ukuran per-nilai storage), kunjungan berikutnya langsung HD tanpa jeda.
 - **Idempoten & tahan re-render** — semua fungsi upgrade bisa dipanggil berulang; MutationObserver memasang ulang ikon jika React mengembalikan ikon lama.
 
 ## Perbandingan (Before/After)
@@ -65,6 +66,9 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 | `EMOJI_INPUT_SCALE` | `'80%'` | Ukuran emoji di kolom input (kecilkan jika masih rapat) |
 | `REACTION_HOVER_SCALE` | `1.4` | Besar emoji saat di-hover di picker (`1` = tanpa efek) |
 | `REACTION_PICKER_HD` | `true` | `false` = jangan ubah ikon reaction picker |
+| `PRELOAD_ALL_EMOJI` | `true` | `false` = matikan unduhan penuh seluruh set emoji saat load (reaksi/sidebar tetap dipreload) |
+| `PRELOAD_CONCURRENCY` | `6` | Jumlah request paralel untuk preload latar belakang |
+| `PRELOAD_RETRY` | `2` | Maksimal percobaan per file saat preload (artinya 1 putaran retry) |
 
 ## Cara kerja (ringkas)
 
@@ -73,6 +77,8 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 - Ikon ubin (sprite) diganti lewat teknik **CSS mask** (`mask-image` + `background-color: var(--secondary-icon)`) agar warnanya ikut tema terang/gelap.
 - Reaction picker ditangani dengan pola **host + overlay**: isi lama di dalam host disembunyikan lewat CSS (tahan re-render React), SVG ditaruh sebagai overlay.
 - Emoji & sidebar memakai SVG dari [Twemoji](https://github.com/jdecked/twemoji) via `cdn.jsdelivr.net` (di-*whitelist* di `@connect`).
+- **Preload penuh**: daftar nama file diambil dari listing direktori CDN yang sama (satu request), lalu seluruh emoji diantre dengan batas paralel supaya tidak menyalip resource Facebook sendiri. Sidebar & 7 reaction diantar lebih duluan; emoji yang muncul di DOM tetap diunduh langsung (on-demand) tanpa menunggu antrean.
+- **Cache di-shard 16 bagian** (hash djb2 per nama, dibaca lazy) — total hasil preload ±9 MB tidak disimpan dalam satu key, jadi tidak melewati batas per-nilai `GM_setValue` dan tidak menahan render `document-start`.
 - Ringkasan reaction dikenali lewat **klasifikasi signature warna**: set warna dalam data-URI SVG native FB dicocokkan ke tabel 7 reaction (pemenang = selisih unik ≤ 3), tanpa perlu nama reaction di label.
 
 ## Alat diagnosa
@@ -93,8 +99,15 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 - **Ikon tertentu masih blur** — pastikan skrip versi terbaru aktif di dasbor Tampermonkey, lalu reload Facebook dengan Ctrl+Shift+R.
 - **Reaksi tidak berubah setelah Facebook update** — struktur DOM Facebook bisa berubah; laporkan lewat GitHub Issues sertakan tangkapan layar dan (bila bisa) output `Ctrl+Shift+H`.
 - **Emoji terlalu rapat di kolom input** — ubah `EMOJI_INPUT_GAP` / `EMOJI_INPUT_SCALE` (lihat tabel konfigurasi).
+- **Kunjungan pertama terasa banyak unduhan** — inilah preload penuh (±9 MB, sekali saja) berjalan di latar belakang setelah Facebook dimuat; tidak memblokir halaman dan hasilnya disimpan permanen. Ingin tanpa itu? set `PRELOAD_ALL_EMOJI = false`.
 
 ## Changelog
+
+### v3.3
+- **Preload penuh**: seluruh set emoji Twemoji (3.846 file, ±9 MB) diunduh otomatis di latar belakang saat Facebook selesai dimuat — saat interaksi (hover picker, scroll, kolom komentar) tidak ada emoji yang masih menunggu load. Daftar nama diambil dari listing direktori CDN (satu request), antrean berjalan maksimal 6 paralel + 1 retry; sidebar & 7 reaction tetap diantar paling duluan.
+- **Cache dipecah jadi 16 shard** per-hash-nama (djb2) dan dibaca lazy — hasil preload ±9 MB tidak lagi disimpan dalam satu key `GM_setValue` (aman dari batas ukuran per-nilai), dan `document-start` tidak menahan render Facebook untuk parse cache besar. Cache lama (≤ v3.2) otomatis dimigrasikan.
+- Gagal unduh tidak lagi mem-poison cache (bisa dicoba lagi saat sesi yang sama).
+- Opsi baru: `PRELOAD_ALL_EMOJI`, `PRELOAD_CONCURRENCY`, `PRELOAD_RETRY`. Unit test 22/22 lulus (sebaran shard, persist lintas sesi, migrasi legacy, kelengkapan 3.846 file, batas paralel, retry).
 
 ### v3.2
 - Ikon **ringkasan reaction** (`"N reactions; see who reacted to this"`) sekarang diganti Twemoji — sebelumnya masih emoji native FB.

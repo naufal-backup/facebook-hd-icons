@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Facebook HD Icons
 // @namespace    fb-hd-icons
-// @version      3.2
+// @version      3.3
 // @description  Ikon Like/Comment/Share, tombol Create a post, avatar, toolbar komentar, sidebar, emoji, dan reaction jadi vector (HD, tidak blur) - dimuat secepat mungkin
 // @homepage     https://github.com/naufal-backup/facebook-hd-icons
 // @supportURL   https://github.com/naufal-backup/facebook-hd-icons/issues
@@ -26,36 +26,142 @@
   const REACTION_HOVER_SCALE = 1.4; // besar emoji saat di-hover di picker (1 = tanpa efek)
   const REACTION_PICKER_HD = true; // false = jangan ubah ikon reaction picker
   const TWEMOJI = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@16.0.1/assets/svg/';
+  const PRELOAD_ALL_EMOJI = true;  // unduh seluruh set Twemoji (3.846 file, ~9MB) di latar belakang saat load
+  const PRELOAD_CONCURRENCY = 6;   // jumlah request paralel untuk preload latar belakang
+  const PRELOAD_RETRY = 2;         // maksimal percobaan per file saat preload (retry sekali)
 
   // ===== Cache SVG persisten (supaya kunjungan berikutnya langsung HD tanpa jeda) =====
-  const CACHE_KEY = 'svg_cache_v1';
-  let store = {};
-  try { store = JSON.parse(GM_getValue(CACHE_KEY, '{}')) || {}; } catch (e) { store = {}; }
+  // Di-pecah jadi 16 shard per-hash-nama: preload penuh ~9MB, kalau disimpan dalam satu key
+  // bisa melewati batas per-nilai storage manager, dan parse 9MB saat document-start akan
+  // menahan render Facebook. Tiap shard dibaca lazy (baru saat ada nama yang masuk).
+  const CACHE_KEY = 'svg_cache_v1';   // key lama (<= 3.2), dimigrasikan ke shard lalu dikosongkan
+  const SHARD_KEY = 'svg_cache_v1_s';
+  const SHARD_COUNT = 16;             // ~16 x 550KB, aman di bawah batas per-nilai storage
+  const shardOf = (name) => {
+    let h = 5381; // djb2 -> sebaran merata antar shard
+    for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) >>> 0;
+    return h & (SHARD_COUNT - 1);
+  };
+  const shards = new Array(SHARD_COUNT).fill(null); // null = belum dibaca dari storage
+  const dirty = new Set();            // shard yang menunggu ditulis
   const toUri = (t) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(t);
   const cache = new Map(); // name -> Promise<uri|null>
-  Object.keys(store).forEach((k) => cache.set(k, Promise.resolve(toUri(store[k]))));
+
+  function getShard(i) {
+    if (shards[i]) return shards[i];
+    let o = {};
+    try { o = JSON.parse(GM_getValue(SHARD_KEY + i, '{}')) || {}; } catch (e) {}
+    shards[i] = o;
+    return o;
+  }
 
   let saveTimer = 0;
   function persist() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { try { GM_setValue(CACHE_KEY, JSON.stringify(store)); } catch (e) {} }, 1000);
+    saveTimer = setTimeout(() => {
+      Array.from(dirty).forEach((i) => {
+        dirty.delete(i);
+        try { GM_setValue(SHARD_KEY + i, JSON.stringify(shards[i] || {})); }
+        catch (e) { if (DEBUG) console.log('[fb-hd] gagal simpan shard ' + i, e); }
+      });
+    }, 1000);
   }
+
+  // migrasi cache lama (satu key) -> shard
+  try {
+    const legacy = JSON.parse(GM_getValue(CACHE_KEY, '{}')) || {};
+    const legacyNames = Object.keys(legacy);
+    if (legacyNames.length) {
+      legacyNames.forEach((n) => { getShard(shardOf(n))[n] = legacy[n]; dirty.add(shardOf(n)); });
+      GM_setValue(CACHE_KEY, '{}');
+      persist();
+      if (DEBUG) console.log('[fb-hd] migrasi cache lama:', legacyNames.length, 'entry');
+    }
+  } catch (e) {}
 
   function loadSvg(name) {
     if (cache.has(name)) return cache.get(name);
+    const si = shardOf(name);
+    const sh = getShard(si);
+    if (name in sh) { // sudah pernah diunduh -> ambil dari cache persisten, tanpa jaringan
+      const p = Promise.resolve(toUri(sh[name]));
+      cache.set(name, p);
+      return p;
+    }
     const p = new Promise((resolve) => {
       GM_xmlhttpRequest({
         method: 'GET',
         url: TWEMOJI + name + '.svg',
         onload: (r) => {
-          if (r.status === 200) { store[name] = r.responseText; persist(); resolve(toUri(r.responseText)); }
-          else resolve(null);
+          if (r.status === 200) {
+            getShard(si)[name] = r.responseText;
+            dirty.add(si);
+            persist();
+            resolve(toUri(r.responseText));
+          } else {
+            cache.delete(name); // gagal -> jangan mem-poison cache, biar bisa dicoba lagi
+            resolve(null);
+          }
         },
-        onerror: () => resolve(null)
+        onerror: () => { cache.delete(name); resolve(null); }
       });
     });
     cache.set(name, p);
     return p;
+  }
+
+  // ===== Preload penuh: seluruh set Twemoji diunduh saat Facebook dimuat =====
+  // Antrean dengan batas paralel supaya tidak menyalip resource Facebook sendiri.
+  // Prioritas on-demand (hover picker, kolom komentar) tetap lewat loadSvg langsung.
+  const preQueue = [];
+  const preQueued = new Set();
+  const preFailed = new Set();
+  let preActive = 0;
+  let preAttempts = 0;
+
+  function preloadPump() {
+    if (!preActive && !preQueue.length && preFailed.size && preAttempts + 1 < PRELOAD_RETRY) {
+      preAttempts++;
+      if (DEBUG) console.log('[fb-hd] retry preload emoji, percobaan ke-' + (preAttempts + 1));
+      preFailed.forEach((n) => { preQueued.delete(n); preQueue.push(n); });
+      preFailed.clear();
+    }
+    while (preActive < PRELOAD_CONCURRENCY && preQueue.length) {
+      const name = preQueue.shift();
+      preQueued.delete(name);
+      preActive++;
+      loadSvg(name).then((uri) => {
+        if (!uri) preFailed.add(name);
+        preActive--;
+        preloadPump();
+      });
+    }
+  }
+
+  function preloadSvg(name) {
+    if (cache.has(name) || preQueued.has(name)) return;
+    preQueued.add(name);
+    preQueue.push(name);
+    preloadPump();
+  }
+
+  // Listing direktori CDN (host ini sudah ada di @connect) -> daftar semua nama file emoji
+  function startPreload() {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: TWEMOJI,
+      onload: (r) => {
+        if (r.status !== 200) {
+          if (DEBUG) console.log('[fb-hd] listing emoji gagal, HTTP ' + r.status);
+          return;
+        }
+        const re = /\/assets\/svg\/([^\/"]+)\.svg/g;
+        let m, n = 0;
+        while ((m = re.exec(r.responseText))) { preloadSvg(m[1]); n++; }
+        if (DEBUG) console.log('[fb-hd] preload emoji dimulai:', n, 'file, paralel ' + PRELOAD_CONCURRENCY);
+      },
+      onerror: () => { if (DEBUG) console.log('[fb-hd] listing emoji gagal (network)'); }
+    });
   }
 
   function setImp(el, prop, val) { el.style.setProperty(prop, val, 'important'); }
@@ -742,9 +848,17 @@
     setTimeout(() => t.remove(), 3000);
   }, true);
 
-  // Preload SVG berwarna supaya sudah ada saat dibutuhkan
-  SIDEBAR_ICONS.forEach(([, k]) => { if (k !== 'metaai') loadSvg(k); });
-  REACTION_ORDER.forEach((k) => { if (k !== 'like') loadSvg(k); });
+  // Preload prioritas: sidebar + reaction diantar duluan lewat antrean (paralel dibatasi)
+  SIDEBAR_ICONS.forEach(([, k]) => { if (k !== 'metaai') preloadSvg(k); });
+  REACTION_ORDER.forEach((k) => { if (k !== 'like') preloadSvg(k); });
+
+  // Sisanya (seluruh set Twemoji) diunduh di latar belakang setelah Facebook selesai dimuat,
+  // supaya saat interaksi (hover picker, scroll, kolom komentar) tidak ada yang masih menunggu load.
+  if (PRELOAD_ALL_EMOJI) {
+    const go = () => setTimeout(startPreload, 1000);
+    if (document.readyState === 'complete') go();
+    else window.addEventListener('load', go, { once: true });
+  }
 
   // Jaring pengaman: pass penuh saat DOM siap dan berkala
   run(root0);
