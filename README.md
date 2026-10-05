@@ -2,7 +2,7 @@
 
 UserScript yang membuat ikon Facebook jadi **vector (HD, tidak blur)** — Like/Comment/Share, toolbar komentar, sidebar, emoji, dan reaction picker. Dimuat secepat mungkin (`document-start`), tanpa kedipan ikon lama.
 
-![Version](https://img.shields.io/badge/version-3.1-blue)
+![Version](https://img.shields.io/badge/version-3.2-blue)
 ![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -20,7 +20,7 @@ Facebook menampilkan banyak ikon sebagai PNG/Sprite kecil (16–20px) yang terli
 - **Sidebar kiri** — ±20 item (Meta AI, Teman, Grup, Marketplace, Event, Gaming, dsb.) diganti ikon vector/emoji sesuai topiknya.
 - **Emoji** — semua emoji PNG (`emoji.php`) diganti Twemoji SVG, termasuk emoji di kolom input (editor Lexical).
 - **Reaction picker** — emoji Like/Love/Care/Haha/Wow/Sad/Angry saat hover diganti Twemoji SVG lengkap dengan efek membesar saat hover (seperti bawaan Facebook).
-- **Ringkasan reaction** — ikon kecil "Like: 2 orang" di bawah post ikut di-HD-kan.
+- **Ringkasan reaction** — ikon kecil "N reactions; see who reacted to this" diganti Twemoji. Label-nya tidak menyebut nama reaction, jadi reaction dikenali dari **signature warna SVG native FB**-nya; kalau tidak dikenali ikon dibiarkan (tetap vector/tajam).
 - **Cache persisten** — SVG diunduh sekali lalu disimpan (via `GM_setValue`), kunjungan berikutnya langsung HD tanpa jeda.
 - **Idempoten & tahan re-render** — semua fungsi upgrade bisa dipanggil berulang; MutationObserver memasang ulang ikon jika React mengembalikan ikon lama.
 
@@ -73,6 +73,7 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 - Ikon ubin (sprite) diganti lewat teknik **CSS mask** (`mask-image` + `background-color: var(--secondary-icon)`) agar warnanya ikut tema terang/gelap.
 - Reaction picker ditangani dengan pola **host + overlay**: isi lama di dalam host disembunyikan lewat CSS (tahan re-render React), SVG ditaruh sebagai overlay.
 - Emoji & sidebar memakai SVG dari [Twemoji](https://github.com/jdecked/twemoji) via `cdn.jsdelivr.net` (di-*whitelist* di `@connect`).
+- Ringkasan reaction dikenali lewat **klasifikasi signature warna**: set warna dalam data-URI SVG native FB dicocokkan ke tabel 7 reaction (pemenang = selisih unik ≤ 3), tanpa perlu nama reaction di label.
 
 ## Alat diagnosa
 
@@ -94,6 +95,11 @@ Buka bagian `===== Config =====` di bagian atas skrip:
 - **Emoji terlalu rapat di kolom input** — ubah `EMOJI_INPUT_GAP` / `EMOJI_INPUT_SCALE` (lihat tabel konfigurasi).
 
 ## Changelog
+
+### v3.2
+- Ikon **ringkasan reaction** (`"N reactions; see who reacted to this"`) sekarang diganti Twemoji — sebelumnya masih emoji native FB.
+- Reaction dikenali dari **signature warna SVG native FB** (tabel 7 reaction, pemenang selisih unik ≤ 3); kalau tidak dikenali, ikon dibiarkan (tetap vector).
+- Diverifikasi dengan sample live: Like → `like`, Haha → `1f606` (match sempurna, selisih 0); self-test 7 signature tanpa saling silang; Twemoji tidak menghasilkan false positive.
 
 ### v3.1
 - Ikon **Live video / Photo/video / Reel** di "Create a post" (webp 24px) diganti SVG vector — sebelumnya blur.

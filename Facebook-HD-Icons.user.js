@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Facebook HD Icons
 // @namespace    fb-hd-icons
-// @version      3.1
+// @version      3.2
 // @description  Ikon Like/Comment/Share, tombol Create a post, avatar, toolbar komentar, sidebar, emoji, dan reaction jadi vector (HD, tidak blur) - dimuat secepat mungkin
 // @homepage     https://github.com/naufal-backup/facebook-hd-icons
 // @supportURL   https://github.com/naufal-backup/facebook-hd-icons/issues
@@ -363,6 +363,74 @@
     });
   }
 
+  // ===== 1f. Ikon ringkasan reaction ("3 reactions; see who reacted to this") =====
+  // Label tombolnya TIDAK menyebut nama reaction, jadi kenali dari isi SVG native FB:
+  // cocokkan set warna di dalam data-URI ke signature tiap reaction -> pemenang harus
+  // selisih unik & <= 3. Kalau tidak cocok, biarkan SVG FB asli (tetap vector, tajam).
+  const FB_SIG = {
+    like:    ['02ADFC', '0866FF', '2B7EFF'],
+    '2764':  ['E11731', 'FA2E3E', 'FF5758', 'FF74AE'], // Love (heart)
+    '1f970': ['1C1C1D', '4B280E', '791119', 'D9D9D9', 'E0761A', 'E11731', 'F68628', 'FA2E3E', 'FF5758', 'FFE480', 'FFE483', 'FFEB80', 'FFF287'], // Care
+    '1f606': ['1C1C1D', '4B280E', 'BC0A26', 'F68628', 'FA2E3E', 'FF5758', 'FF60A4', 'FFF287'], // Haha (smile)
+    '1f62e': ['1C1C1D', '4B280E', 'E0761A', 'F68628', 'FF5758', 'FFF287'], // Wow
+    '1f622': ['02ADFC', '1C1C1D', '4B280E', 'E0761A', 'F68628', 'FF5758', 'FFF287'], // Sad
+    '1f621': ['1C1C1D', '4B280E', 'BC0A26', 'FA2E3E', 'FF5758', 'FFB169']  // Angry
+  };
+
+  function fbReactionKey(svg) {
+    const set = new Set();
+    const re = /#([0-9a-fA-F]{3,6})\b/g;
+    let m;
+    while ((m = re.exec(svg))) {
+      let h = m[1].toUpperCase();
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      set.add(h);
+    }
+    if (!set.size) return null;
+    let best = null, bestD = 1e9, secondD = 1e9;
+    for (const k in FB_SIG) {
+      const ref = FB_SIG[k];
+      let d = 0;
+      set.forEach((c) => { if (ref.indexOf(c) < 0) d++; });
+      for (let i = 0; i < ref.length; i++) if (!set.has(ref[i])) d++;
+      if (d < bestD) { secondD = bestD; bestD = d; best = k; }
+      else if (d < secondD) secondD = d;
+    }
+    return (bestD <= 3 && secondD > bestD) ? best : null;
+  }
+
+  function decodeDataUri(src) {
+    const comma = src.indexOf(',');
+    if (comma < 0) return src;
+    const payload = src.slice(comma + 1);
+    let svg;
+    try { svg = src.slice(0, comma).indexOf(';base64') >= 0 ? atob(payload) : payload; }
+    catch (e) { svg = payload; }
+    return svg.replace(/%23/gi, '#'); // '#rrggbb' ada di URL-encoded sebagai %23rrggbb
+  }
+
+  async function upgradeFbSummaryIcons(root) {
+    root.querySelectorAll('[role="button"][aria-label]').forEach(async (btn) => {
+      const label = btn.getAttribute('aria-label') || '';
+      if (!/react|reaksi|reagi/i.test(label)) return;
+      if (reactionKeyFromStateLabel(label)) return; // "Remove/Change X reaction" -> fungsi 1e
+      btn.querySelectorAll('img[src^="data:image/svg"]').forEach(async (img) => {
+        if (img.dataset.hdFb || img.dataset.hd || img.dataset.hdState ||
+            img.dataset.hdAct || img.dataset.hdSum) return;
+        const key = fbReactionKey(decodeDataUri(img.getAttribute('src') || ''));
+        if (DEBUG && !key) console.log('[fb-hd] signature ringkasan tak dikenal:', label);
+        if (!key) return;
+        const uri = key === 'like' ? LIKE_SVG : await loadSvg(key);
+        if (!uri) return;
+        watch(img);
+        img.dataset.hdFb = key;
+        if (img.getAttribute('src') === uri) return;
+        img.removeAttribute('srcset');
+        img.setAttribute('src', uri);
+      });
+    });
+  }
+
   // ===== 2. Emoji (PNG -> Twemoji SVG) =====
   function twemojiName(ch) {
     const s = ch.includes('\u200d') ? ch : ch.replace(/\uFE0F/g, '');
@@ -596,6 +664,7 @@
     upgradeCreatePostIcons(root);
     upgradeAvatarRes(root);
     upgradeReactionStateButtons(root);
+    upgradeFbSummaryIcons(root);
     upgradeSidebarIcons(root);
     upgradeSummaryIcons(root);
     upgradeAltReactionImgs(root);
